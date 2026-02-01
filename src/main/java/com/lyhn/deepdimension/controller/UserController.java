@@ -2,6 +2,7 @@ package com.lyhn.deepdimension.controller;
 import com.lyhn.deepdimension.exception.CustomException;
 import com.lyhn.deepdimension.model.User;
 import com.lyhn.deepdimension.repository.UserRepository;
+import com.lyhn.deepdimension.service.UserService;
 import com.lyhn.deepdimension.utils.JwtUtils;
 import com.lyhn.deepdimension.utils.LogUtils;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -14,6 +15,9 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+
+@RestController
+@RequestMapping("/api/v1/users")
 public class UserController {
 
     @Autowired
