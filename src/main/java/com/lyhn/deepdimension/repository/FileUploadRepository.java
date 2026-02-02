@@ -14,6 +14,9 @@ import java.util.Set;
 public interface FileUploadRepository  extends JpaRepository<FileUpload, Long> {
     Optional<FileUpload> findByFileMd5(String fileMd5);
 
+    // 或者添加更多条件保证唯一性
+    Optional<FileUpload> findFirstByFileMd5OrderByCreatedAtDesc(String fileMd5);
+
     Optional<FileUpload> findByFileMd5AndUserId(String fileMd5, String userId);
 
     Optional<FileUpload> findByFileNameAndIsPublicTrue(String fileName);
