@@ -10,6 +10,7 @@ import io.minio.GetPresignedObjectUrlArgs;
 import io.minio.MinioClient;
 import io.minio.RemoveObjectArgs;
 import io.minio.http.Method;
+import org.mozilla.universalchardet.UniversalDetector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,6 +18,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.util.Arrays;
@@ -232,7 +234,22 @@ public class DocumentService {
                                 .object(objectName)
                                 .build())) {
 
-                    BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, "UTF-8"));
+                    // 检测文件编码
+                    String encoding = detectEncoding(inputStream);
+                    logger.info("检测到文件编码: {}, fileName={}", encoding, fileName);
+
+                    // 重置流以重新读取
+                    inputStream.close();
+                    InputStream newInputStream = minioClient.getObject(
+                            GetObjectArgs.builder()
+                                    .bucket("deep.dimension")
+                                    .object(objectName)
+                                    .build());
+
+
+                    BufferedReader reader = new BufferedReader(new InputStreamReader(newInputStream, encoding));
+
+//                    BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, "UTF-8"));
                     StringBuilder content = new StringBuilder();
                     String line;
                     int bytesRead = 0;
@@ -276,6 +293,25 @@ public class DocumentService {
             logger.error("获取文件预览内容失败: fileMd5={}, fileName={}", fileMd5, fileName, e);
             return "预览失败: " + e.getMessage();
         }
+    }
+
+    /**
+     * 检测文件编码
+     */
+    private String detectEncoding(InputStream inputStream) throws IOException {
+        UniversalDetector detector = new UniversalDetector(null);
+        byte[] buf = new byte[4096];
+        int nread;
+
+        while ((nread = inputStream.read(buf)) > 0 && !detector.isDone()) {
+            detector.handleData(buf, 0, nread);
+        }
+
+        detector.dataEnd();
+        String encoding = detector.getDetectedCharset();
+
+        // 如果检测失败，默认使用 UTF-8
+        return encoding != null ? encoding : "UTF-8";
     }
 
     /**
