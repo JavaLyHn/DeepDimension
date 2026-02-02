@@ -1,6 +1,7 @@
 package com.lyhn.deepdimension.filter;
 
 import com.lyhn.deepdimension.model.FileUpload;
+import com.lyhn.deepdimension.repository.FileUploadRepository;
 import com.lyhn.deepdimension.utils.JwtUtils;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
