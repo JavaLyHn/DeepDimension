@@ -4,7 +4,9 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lyhn.deepdimension.client.DeepSeekClient;
 import com.lyhn.deepdimension.entity.SearchResult;
+import com.lyhn.deepdimension.service.DynamicTopKSelector;
 import com.lyhn.deepdimension.service.HybridSearchService;
+import com.lyhn.deepdimension.service.QueryRewriteService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -29,9 +31,15 @@ import java.util.concurrent.ConcurrentHashMap;
 @Service
 public class ChatHandler {
     private static final Logger logger = LoggerFactory.getLogger(ChatHandler.class);
+    private static final int OVER_RECALL_K = 15;
+    private static final int DYNAMIC_MIN_K = 1;
+    private static final int DYNAMIC_MAX_K = 10;
+
     private final RedisTemplate<String, String> redisTemplate;
     private final HybridSearchService searchService;
     private final DeepSeekClient deepSeekClient;
+    private final DynamicTopKSelector dynamicTopKSelector;
+    private final QueryRewriteService queryRewriteService;
     private final ObjectMapper objectMapper;
 
     // 用于存储每个会话的完整响应
@@ -43,10 +51,14 @@ public class ChatHandler {
 
     public ChatHandler(RedisTemplate<String, String> redisTemplate,
                        HybridSearchService searchService,
-                       DeepSeekClient deepSeekClient) {
+                       DeepSeekClient deepSeekClient,
+                       DynamicTopKSelector dynamicTopKSelector,
+                       QueryRewriteService queryRewriteService) {
         this.redisTemplate = redisTemplate;
         this.searchService = searchService;
         this.deepSeekClient = deepSeekClient;
+        this.dynamicTopKSelector = dynamicTopKSelector;
+        this.queryRewriteService = queryRewriteService;
         this.objectMapper = new ObjectMapper();
     }
 
@@ -68,14 +80,24 @@ public class ChatHandler {
             List<Map<String, String>> history = getConversationHistory(conversationId);
             logger.debug("获取到 {} 条历史对话", history.size());
 
-            // 3. 执行带权限过滤的混合搜索（从Elasticsearch中检索最相关的5条知识片段）
-            List<SearchResult> searchResults = searchService.searchWithPermission(userMessage, userId, 5);
-            logger.debug("搜索结果数量: {}", searchResults.size());
+            // 3. Query-Rewrite：基于 LLM 的查询重写（指代消解 + 语义扩展）
+            String searchQuery = queryRewriteService.rewrite(userMessage, history);
+            if (!searchQuery.equals(userMessage)) {
+                logger.info("查询重写: '{}' -> '{}'", userMessage, searchQuery);
+            }
 
-            // 4. 构建上下文，将搜索结果整合为AI可理解的上下文信息
+            // 4. 执行带权限过滤的混合搜索（过召回策略：先多召回，再动态筛选）
+            List<SearchResult> rawResults = searchService.searchWithPermission(searchQuery, userId, OVER_RECALL_K);
+            logger.debug("过召回搜索结果数量: {}", rawResults.size());
+
+            // 5. Dynamic Top-K 调度：根据召回分数分布动态调整提交给 LLM 的片段数量
+            List<SearchResult> searchResults = dynamicTopKSelector.select(rawResults, DYNAMIC_MIN_K, DYNAMIC_MAX_K);
+            logger.info("Dynamic Top-K 调度: 过召回 {} 条 -> 筛选后 {} 条", rawResults.size(), searchResults.size());
+
+            // 6. 构建上下文，将搜索结果整合为AI可理解的上下文信息
             String context = buildContext(searchResults);
 
-            // 5. 调用 DeepSeek API 并处理流式响应
+            // 7. 调用 DeepSeek API 并处理流式响应
             logger.info("调用DeepSeek API生成回复");
             deepSeekClient.streamResponse(userMessage, context, history,
                     chunk -> {//成功接收数据块的回调
@@ -98,7 +120,7 @@ public class ChatHandler {
                         responseFutures.remove(session.getId());
                     });
 
-            // 6. 启动一个后台任务检查并标记响应完成
+            // 8. 启动一个后台任务检查并标记响应完成
             new Thread(() -> {
                 try {
                     // 等待最多30秒，给API足够的响应时间

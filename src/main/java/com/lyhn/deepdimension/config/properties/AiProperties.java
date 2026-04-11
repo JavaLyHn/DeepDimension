@@ -11,6 +11,8 @@ public class AiProperties {
 
     private Prompt prompt = new Prompt();
     private Generation generation = new Generation();
+    private QueryRewrite queryRewrite = new QueryRewrite();
+    private CrossEncoder crossEncoder = new CrossEncoder();
 
     /**
      * ai:
@@ -29,6 +31,17 @@ public class AiProperties {
      *      temperature: 0.3
      *      max-tokens: 2000
      *      top-p: 0.9
+     *  query-rewrite:
+     *      system-prompt: null
+     *      temperature: 0.1
+     *      max-tokens: 256
+     *  cross-encoder:
+     *      enabled: true
+     *      top-n: 20
+     *      min-score: 0.1
+     *      system-prompt: null
+     *      temperature: 0.05
+     *      max-tokens: 512
      */
 
     @Data
@@ -51,5 +64,22 @@ public class AiProperties {
         private Integer maxTokens = 2000;
         /** nucleus top-p */
         private Double topP = 0.9;
+    }
+
+    @Data
+    public static class QueryRewrite {
+        private String systemPrompt;
+        private Double temperature = 0.1;
+        private Integer maxTokens = 256;
+    }
+
+    @Data
+    public static class CrossEncoder {
+        private Boolean enabled = true;
+        private Integer topN = 20;
+        private Double minScore = 0.1;
+        private String systemPrompt;
+        private Double temperature = 0.05;
+        private Integer maxTokens = 512;
     }
 }

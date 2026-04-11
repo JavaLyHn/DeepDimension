@@ -3,6 +3,7 @@ package com.lyhn.deepdimension.service;
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import co.elastic.clients.elasticsearch.core.SearchResponse;
 import com.lyhn.deepdimension.client.EmbeddingClient;
+import com.lyhn.deepdimension.config.properties.AiProperties;
 import com.lyhn.deepdimension.entity.EsDocument;
 import com.lyhn.deepdimension.entity.SearchResult;
 import com.lyhn.deepdimension.exception.CustomException;
@@ -49,6 +50,12 @@ public class HybridSearchService {
 
     @Autowired
     private FileUploadRepository fileUploadRepository;
+
+    @Autowired
+    private CrossEncoderReranker crossEncoderReranker;
+
+    @Autowired
+    private AiProperties aiProperties;
 
     /**
      * 使用文本匹配和向量相似度进行混合搜索，支持权限过滤
@@ -156,7 +163,15 @@ public class HybridSearchService {
                     })
                     .toList();
 
-            logger.debug("返回搜索结果数量: {}", results.size());
+            logger.debug("KNN+BM25阶段完成，结果数量: {}", results.size());
+
+            if (!results.isEmpty() && isCrossEncoderEnabled()) {
+                int ceTopN = getCrossEncoderTopN();
+                logger.info("Stage3 - Cross-Encoder重排: 输入 {} 条, topN={}", results.size(), ceTopN);
+                results = crossEncoderReranker.rerank(query, results, ceTopN);
+                logger.info("Cross-Encoder重排完成，最终结果数量: {}", results.size());
+            }
+
             attachFileNames(results);
             return results;
         } catch (Exception e) {
@@ -470,5 +485,18 @@ public class HybridSearchService {
         } catch (Exception e) {
             logger.error("补充文件名失败", e);
         }
+    }
+
+    private boolean isCrossEncoderEnabled() {
+        AiProperties.CrossEncoder ce = aiProperties.getCrossEncoder();
+        return ce != null && Boolean.TRUE.equals(ce.getEnabled());
+    }
+
+    private int getCrossEncoderTopN() {
+        AiProperties.CrossEncoder ce = aiProperties.getCrossEncoder();
+        if (ce != null && ce.getTopN() != null) {
+            return ce.getTopN();
+        }
+        return 20;
     }
 }

@@ -14,6 +14,7 @@ import org.springframework.web.reactive.function.client.WebClient;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.time.Duration;
 import java.util.function.Consumer;
 
 
@@ -156,6 +157,114 @@ public class DeepSeekClient {
             }
         } catch (Exception e) {
             logger.error("处理数据块时出错: {}", e.getMessage(), e);
+        }
+    }
+
+    public String completeResponse(String systemPrompt, String userPrompt, List<Map<String, String>> history) {
+        return completeResponse(systemPrompt, userPrompt, history, "query-rewrite");
+    }
+
+    public String completeResponse(String systemPrompt, String userPrompt,
+                                    List<Map<String, String>> history, String taskType) {
+        try {
+            Map<String, Object> request = buildNonStreamRequest(systemPrompt, userPrompt, history, taskType);
+
+            logger.debug("发送非流式请求到 LLM，用户提示长度: {}", userPrompt != null ? userPrompt.length() : 0);
+
+            String responseBody = webClient.post()
+                    .uri("/chat/completions")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(request)
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .timeout(Duration.ofSeconds(30))
+                    .block();
+
+            if (responseBody == null || responseBody.isEmpty()) {
+                logger.warn("LLM 非流式响应为空");
+                return null;
+            }
+
+            return parseCompleteResponse(responseBody);
+        } catch (Exception e) {
+            logger.error("LLM 非流式调用失败: {}", e.getMessage(), e);
+            return null;
+        }
+    }
+
+    private Map<String, Object> buildNonStreamRequest(String systemPrompt, String userPrompt,
+                                                      List<Map<String, String>> history, String taskType) {
+        Map<String, Object> request = new java.util.HashMap<>();
+        request.put("model", model);
+        request.put("stream", false);
+
+        List<Map<String, String>> messages = new ArrayList<>();
+
+        if (systemPrompt != null && !systemPrompt.isBlank()) {
+            messages.add(Map.of("role", "system", "content", systemPrompt));
+        }
+
+        if (history != null && !history.isEmpty()) {
+            messages.addAll(history);
+        }
+
+        if (userPrompt != null && !userPrompt.isBlank()) {
+            messages.add(Map.of("role", "user", "content", userPrompt));
+        }
+
+        request.put("messages", messages);
+
+        if ("cross-encoder".equals(taskType)) {
+            AiProperties.CrossEncoder ceCfg = aiProperties.getCrossEncoder();
+            if (ceCfg != null) {
+                if (ceCfg.getTemperature() != null) {
+                    request.put("temperature", ceCfg.getTemperature());
+                }
+                if (ceCfg.getMaxTokens() != null) {
+                    request.put("max_tokens", ceCfg.getMaxTokens());
+                }
+            } else {
+                request.put("temperature", 0.05);
+                request.put("max_tokens", 512);
+            }
+        } else {
+            AiProperties.QueryRewrite rewriteCfg = aiProperties.getQueryRewrite();
+            if (rewriteCfg != null) {
+                if (rewriteCfg.getTemperature() != null) {
+                    request.put("temperature", rewriteCfg.getTemperature());
+                }
+                if (rewriteCfg.getMaxTokens() != null) {
+                    request.put("max_tokens", rewriteCfg.getMaxTokens());
+                }
+            } else {
+                request.put("temperature", 0.1);
+                request.put("max_tokens", 256);
+            }
+        }
+
+        return request;
+    }
+
+    private String parseCompleteResponse(String responseBody) {
+        try {
+            ObjectMapper mapper = new ObjectMapper();
+            JsonNode root = mapper.readTree(responseBody);
+
+            JsonNode choices = root.path("choices");
+            if (choices.isArray() && !choices.isEmpty()) {
+                JsonNode firstChoice = choices.get(0);
+                String content = firstChoice.path("message").path("content").asText("");
+                if (!content.isEmpty()) {
+                    logger.debug("解析 LLM 响应成功，内容长度: {}", content.length());
+                    return content;
+                }
+            }
+
+            logger.warn("LLM 响应格式异常，无法提取内容: {}", responseBody.substring(0, Math.min(200, responseBody.length())));
+            return null;
+        } catch (Exception e) {
+            logger.error("解析 LLM 非流式响应失败: {}", e.getMessage());
+            return null;
         }
     }
 }
