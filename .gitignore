@@ -31,3 +31,10 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### Sensitive Files ###
+application.yml
+application-*.yml
+!application-template.yml
+.env
+.env.*
